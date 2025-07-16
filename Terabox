@@ -1,0 +1,107 @@
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+import requests
+import re
+
+# 🔐 Force Join Channel Username
+FORCE_JOIN_CHANNEL = "@ckdau"  # Don't change unless channel username changes
+
+# 🧠 Terabox Link Extractor
+def get_terabox_links(url):
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers)
+        text = response.text
+
+        dlink = re.search(r'"downloadUrl":"(.*?)"', text)
+        file_name = re.search(r'"filename":"(.*?)"', text)
+
+        return {
+            "download_url": dlink.group(1).replace("\\u002F", "/") if dlink else url,
+            "watch_url": url,
+            "file_name": file_name.group(1) if file_name else "Video File"
+        } if dlink else None
+    except:
+        return None
+
+# 🔎 Check if user is a member
+async def is_user_joined(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user_id = update.effective_user.id
+    try:
+        member = await context.bot.get_chat_member(chat_id=FORCE_JOIN_CHANNEL, user_id=user_id)
+        return member.status in ["member", "creator", "administrator"]
+    except:
+        return False
+
+# ✅ Start command
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_joined = await is_user_joined(update, context)
+    if not user_joined:
+        join_button = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 Join Channel", url="https://t.me/ckdau")],
+            [InlineKeyboardButton("✅ I Have Joined", callback_data="check_joined")]
+        ])
+        await update.message.reply_text(
+            "🔒 To use this bot, please join our channel first.",
+            reply_markup=join_button
+        )
+        return
+
+    await update.message.reply_text("👋 Welcome! Now send me any Terabox link.")
+
+# 🔁 Callback to re-check if user has joined
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "check_joined":
+        user_joined = await is_user_joined(update, context)
+        if user_joined:
+            await query.edit_message_text("✅ Thank you for joining! Now send me a Terabox link.")
+        else:
+            await query.edit_message_text("❌ You have not joined yet. Please join and try again.")
+
+# 🎬 Handle Terabox link
+async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_joined = await is_user_joined(update, context)
+    if not user_joined:
+        join_button = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 Join Channel", url="https://t.me/ckdau")],
+            [InlineKeyboardButton("✅ I Have Joined", callback_data="check_joined")]
+        ])
+        await update.message.reply_text(
+            "🔒 Please join our channel first to use this bot.",
+            reply_markup=join_button
+        )
+        return
+
+    link = update.message.text.strip()
+    if "terabox" not in link:
+        await update.message.reply_text("⚠️ Please send a valid Terabox link.")
+        return
+
+    await update.message.reply_text("🔄 Fetching video link...")
+
+    result = get_terabox_links(link)
+    if result:
+        buttons = [
+            [InlineKeyboardButton("▶️ Watch Online", url=result["watch_url"])],
+            [InlineKeyboardButton("⬇️ Download", url=result["download_url"])]
+        ]
+        reply_markup = InlineKeyboardMarkup(buttons)
+        await update.message.reply_text(
+            f"🎬 *{result['file_name']}*",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    else:
+        await update.message.reply_text("❌ Failed to fetch video link. Try another one.")
+
+# 🧠 Initialize the bot
+app = ApplicationBuilder().token("7626401573:AAFCO0WcPa6sh2EYdwVEPBYYCvujDanU_ig").build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(button_callback))
+app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_link))
+
+print("✅ Bot is running... Press Ctrl+C to stop")
+app.run_polling()
